@@ -7,10 +7,14 @@
     <string name="camera_proxy_activity">选择图片文件</string>
 
     <!-- Notifications -->
+    <string name="notifications_important">Shelter 重要通知</string>
+    <string name="finish_provision_title">点击这里完成 Shelter 初始化</string>
+    <string name="finish_provision_desc">您距离使用 Shelter 仅有一步之遥。</string>
     <string name="service_title">Shelter 服务</string>
     <string name="service_desc">Shelter 正在运行 &#8230;</string>
     <string name="service_auto_freeze_title">自动冻结等待中</string>
     <string name="service_auto_freeze_desc">Shelter 将会在您下次锁屏时自动冻结使用 \"解冻并运行\" 启动的应用</string>
+    <string name="service_auto_freeze_now">立刻冻结</string>
 
     <!-- Main UI -->
     <string name="fragment_profile_main">主用户</string>
@@ -19,6 +23,7 @@
     <string name="batch_operation">批量操作</string>
 
     <!-- App Context Menu -->
+    <string name="search">搜索</string>
     <string name="clone_to_work_profile">克隆到 Shelter (工作用户)</string>
     <string name="clone_to_main_profile">克隆到主用户</string>
     <string name="uninstall_app">卸载</string>
@@ -76,6 +81,7 @@
     <string name="freeze_all_success">所有在 \"自动冻结\" 列表中的应用都已经冻结成功</string>
     <string name="shortcut_create_success">快捷方式已创建</string>
     <string name="request_usage_stats">Shelter 需要 <b>使用情况数据</b> 来做这件事。请在按 \"确定\" 后出现的窗口中，对 <b>两个</b> Shelter <b>都</b> 打开此权限。如果没有全部打开，该功能将无法正确运作。</string>
+    <string name="launch_app_fail">无法启动没有用户界面的应用 %s</string>
 
     <!-- MIUI -->
     <string name="miui_cannot_clone">目前无法在 MIUI 上克隆非系统应用。请先克隆您的系统应用商店 (如 <b>Play Store</b>) 然后从克隆的应用商店中安装应用</string>

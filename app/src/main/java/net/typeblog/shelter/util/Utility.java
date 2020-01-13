@@ -36,7 +36,10 @@ import net.typeblog.shelter.ui.MainActivity;
 
 import java.io.BufferedReader;
 import java.io.FileDescriptor;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -122,6 +125,11 @@ public class Utility {
                 adminComponent,
                 new IntentFilter(DummyActivity.FREEZE_ALL_IN_LIST),
                 DevicePolicyManager.FLAG_MANAGED_CAN_ACCESS_PARENT);
+
+        manager.addCrossProfileIntentFilter(
+                adminComponent,
+                new IntentFilter(DummyActivity.PUBLIC_FREEZE_ALL),
+                DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED); // Used by FreezeService in profile
 
         manager.addCrossProfileIntentFilter(
                 adminComponent,
@@ -348,7 +356,7 @@ public class Utility {
     public static String getFileExtension(String filePath) {
         int index = filePath.lastIndexOf(".");
         if (index > 0) {
-            return filePath.substring(index + 1, filePath.length());
+            return filePath.substring(index + 1);
         } else {
             return null;
         }
@@ -366,47 +374,70 @@ public class Utility {
         return mode == AppOpsManager.MODE_ALLOWED;
     }
 
+    // Pipe an InputStream to OutputStream
+    public static void pipe(InputStream is, OutputStream os) throws IOException {
+        int n;
+        byte[] buffer = new byte[65536];
+        while ((n = is.read(buffer)) > -1) {
+            os.write(buffer, 0, n);
+        }
+    }
+
     // Utilities to build notifications for cross-version compatibility
     private static final String NOTIFICATION_CHANNEL_ID = "ShelterService";
+    private static final String NOTIFICATION_CHANNEL_IMPORTANT = "ShelterService-Important";
     public static Notification buildNotification(Context context, String ticker, String title, String desc, int icon) {
+        return buildNotification(context, false, ticker, title, desc, icon);
+    }
+
+    public static Notification buildNotification(Context context, boolean important, String ticker, String title, String desc, int icon) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            return buildNotificationOreo(context, ticker, title, desc, icon);
+            return buildNotificationOreo(context, important, ticker, title, desc, icon);
         } else {
-            return buildNotificationLollipop(context, ticker, title, desc, icon);
+            return buildNotificationLollipop(context, important, ticker, title, desc, icon);
         }
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    private static Notification buildNotificationLollipop(Context context, String ticker, String title, String desc, int icon) {
+    private static Notification buildNotificationLollipop(Context context, boolean important, String ticker, String title, String desc, int icon) {
         return new Notification.Builder(context)
                 .setTicker(ticker)
                 .setContentTitle(title)
                 .setContentText(desc)
                 .setSmallIcon(icon)
-                .setPriority(Notification.PRIORITY_MIN)
+                .setPriority(important ? Notification.PRIORITY_MAX : Notification.PRIORITY_MIN)
                 .build();
     }
 
     @TargetApi(Build.VERSION_CODES.O)
-    private static Notification buildNotificationOreo(Context context, String ticker, String title, String desc, int icon) {
+    private static Notification buildNotificationOreo(Context context, boolean important, String ticker, String title, String desc, int icon) {
+        String id = important ? NOTIFICATION_CHANNEL_IMPORTANT : NOTIFICATION_CHANNEL_ID;
         // Android O and later: Notification Channel
         NotificationManager nm = context.getSystemService(NotificationManager.class);
-        if (nm.getNotificationChannel(NOTIFICATION_CHANNEL_ID) == null) {
+        if (nm.getNotificationChannel(id) == null) {
             NotificationChannel chan = new NotificationChannel(
-                    NOTIFICATION_CHANNEL_ID, context.getString(R.string.app_name),
-                    NotificationManager.IMPORTANCE_MIN);
+                    id,
+                    important ? context.getString(R.string.notifications_important)
+                            : context.getString(R.string.app_name),
+                    important ? NotificationManager.IMPORTANCE_HIGH
+                            : NotificationManager.IMPORTANCE_MIN);
             nm.createNotificationChannel(chan);
         }
 
         // Disable everything: do not disturb the user
-        NotificationChannel chan = nm.getNotificationChannel(NOTIFICATION_CHANNEL_ID);
-        chan.enableVibration(false);
-        chan.enableLights(false);
-        chan.setImportance(NotificationManager.IMPORTANCE_MIN);
+        NotificationChannel chan = nm.getNotificationChannel(id);
+        if (!important) {
+            chan.enableVibration(false);
+            chan.enableLights(false);
+            chan.setImportance(NotificationManager.IMPORTANCE_MIN);
+        } else {
+            chan.enableVibration(true);
+            chan.setImportance(NotificationManager.IMPORTANCE_HIGH);
+        }
         nm.createNotificationChannel(chan);
 
         // Create foreground notification to keep the service alive
-        return new Notification.Builder(context, NOTIFICATION_CHANNEL_ID)
+        return new Notification.Builder(context, id)
                 .setTicker(ticker)
                 .setContentTitle(title)
                 .setContentText(desc)

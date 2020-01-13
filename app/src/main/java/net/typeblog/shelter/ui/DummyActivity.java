@@ -2,10 +2,12 @@ package net.typeblog.shelter.ui;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
@@ -32,9 +34,13 @@ import net.typeblog.shelter.util.SettingsManager;
 import net.typeblog.shelter.util.Utility;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.UUID;
 
 // DummyActivity does nothing about presenting any UI
 // It is a wrapper over various different operations
@@ -58,6 +64,7 @@ public class DummyActivity extends Activity {
     public static final String START_FILE_SHUTTLE = "net.typeblog.shelter.action.START_FILE_SHUTTLE";
     public static final String START_FILE_SHUTTLE_2 = "net.typeblog.shelter.action.START_FILE_SHUTTLE_2";
     public static final String SYNCHRONIZE_PREFERENCE = "net.typeblog.shelter.action.SYNCHRONIZE_PREFERENCE";
+    public static final String PACKAGEINSTALLER_CALLBACK = "net.typeblog.shelter.action.PACKAGEINSTALLER_CALLBACK";
 
     // Only these actions are allowed without a valid signature
     private static final List<String> ACTIONS_ALLOWED_WITHOUT_SIGNATURE = Arrays.asList(
@@ -166,6 +173,27 @@ public class DummyActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+
+        if (intent.getAction().equals(PACKAGEINSTALLER_CALLBACK)) {
+            int status = intent.getExtras().getInt(PackageInstaller.EXTRA_STATUS);
+
+            switch (status) {
+                case PackageInstaller.STATUS_PENDING_USER_ACTION:
+                    startActivity((Intent) intent.getExtras().get(Intent.EXTRA_INTENT));
+                    break;
+                case PackageInstaller.STATUS_SUCCESS:
+                    appInstallFinished(Activity.RESULT_OK);
+                    break;
+                default:
+                    appInstallFinished(Activity.RESULT_CANCELED);
+                    break;
+            }
+        }
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
@@ -258,18 +286,56 @@ public class DummyActivity extends Activity {
             StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().build());
         }
 
-        Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE, uri);
-        intent.putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, getPackageName());
-        intent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
-        intent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivityForResult(intent, REQUEST_INSTALL_PACKAGE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                actionInstallPackageQ(uri);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE, uri);
+            intent.putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, getPackageName());
+            intent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+            intent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, REQUEST_INSTALL_PACKAGE);
+        }
 
         // Restore the VmPolicy anyway
         StrictMode.setVmPolicy(policy);
     }
 
+    // On Android Q, ACTION_INSTALL_PACKAGE has been deprecated.
+    // We have to switch to using PackageInstaller for the job, which isn't quite
+    // as elegant because now we really need to read the entire apk and write to it
+    // Keep this case only for Q for now.
+    private void actionInstallPackageQ(Uri uri) throws IOException {
+        PackageInstaller pi = getPackageManager().getPackageInstaller();
+        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        int sessionId = pi.createSession(params);
+        PackageInstaller.Session session = pi.openSession(sessionId);
+
+        InputStream is = getContentResolver().openInputStream(uri);
+        OutputStream os = session.openWrite(UUID.randomUUID().toString(), 0, is.available());
+        Utility.pipe(is, os);
+        session.fsync(os);
+        os.close();
+        is.close();
+
+        Intent intent = new Intent(this, DummyActivity.class);
+        intent.setAction(PACKAGEINSTALLER_CALLBACK);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0,
+                intent, PendingIntent.FLAG_UPDATE_CURRENT);
+        session.commit(pendingIntent.getIntentSender());
+    }
+
     private void actionUninstallPackage() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            actionUninstallPackageQ();
+            return;
+        }
+
         Uri uri = Uri.fromParts("package", getIntent().getStringExtra("package"), null);
         Intent intent = new Intent(Intent.ACTION_UNINSTALL_PACKAGE, uri);
         intent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
@@ -280,6 +346,15 @@ public class DummyActivity extends Activity {
         // If ANY separate logic is added for any of them,
         // the request code should be separated.
         startActivityForResult(intent, REQUEST_INSTALL_PACKAGE);
+    }
+
+    private void actionUninstallPackageQ() {
+        PackageInstaller pi = getPackageManager().getPackageInstaller();
+        Intent intent = new Intent(this, DummyActivity.class);
+        intent.setAction(PACKAGEINSTALLER_CALLBACK);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0,
+                intent, PendingIntent.FLAG_UPDATE_CURRENT);
+        pi.uninstall(getIntent().getStringExtra("package"), pendingIntent.getIntentSender());
     }
 
     private void appInstallFinished(int resultCode) {
@@ -312,6 +387,7 @@ public class DummyActivity extends Activity {
         if (!mIsProfileOwner) {
             // Forward it to work profile
             Intent intent = new Intent(UNFREEZE_AND_LAUNCH);
+            Utility.transferIntentToProfile(this, intent);
             String packageName = getIntent().getStringExtra("packageName");
             intent.putExtra("packageName", packageName);
             intent.putExtra("shouldFreeze",
@@ -333,7 +409,6 @@ public class DummyActivity extends Activity {
                 intent.putExtra("linkedPackages", packages);
                 intent.putExtra("linkedPackagesShouldFreeze", packagesShouldFreeze);
             }
-            Utility.transferIntentToProfile(this, intent);
             startActivity(intent);
             finish();
             return;
@@ -372,6 +447,9 @@ public class DummyActivity extends Activity {
                 registerAppToFreeze(packageName);
             }
             startActivity(launchIntent);
+        } else {
+            // Acknowledge the user that the application cannot be launched
+            Toast.makeText(this, getString(R.string.launch_app_fail, packageName), Toast.LENGTH_SHORT).show();
         }
 
         finish();
@@ -388,10 +466,10 @@ public class DummyActivity extends Activity {
         // after loading the full list to freeze
         if (!mIsProfileOwner) {
             Intent intent = new Intent(FREEZE_ALL_IN_LIST);
+            Utility.transferIntentToProfile(this, intent);
             String[] list = LocalStorageManager.getInstance()
                     .getStringList(LocalStorageManager.PREF_AUTO_FREEZE_LIST_WORK_PROFILE);
             intent.putExtra("list", list);
-            Utility.transferIntentToProfile(this, intent);
             startActivity(intent);
             finish();
         } else {
